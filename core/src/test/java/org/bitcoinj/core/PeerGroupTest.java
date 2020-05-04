@@ -141,14 +141,14 @@ public class PeerGroupTest extends TestWithPeerGroup {
         final AtomicBoolean result = new AtomicBoolean();
         peerGroup.addPeerDiscovery(new PeerDiscovery() {
             @Override
-            public InetSocketAddress[] getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
+            public List<InetSocketAddress> getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
                 if (!result.getAndSet(true)) {
                     // Pretend we are not connected to the internet.
                     throw new PeerDiscoveryException("test failure");
                 } else {
                     // Return a bogus address.
                     latch.countDown();
-                    return new InetSocketAddress[]{new InetSocketAddress("localhost", 1)};
+                    return Arrays.asList(new InetSocketAddress("localhost", 1));
                 }
             }
 
@@ -165,13 +165,13 @@ public class PeerGroupTest extends TestWithPeerGroup {
 
     // Utility method to create a PeerDiscovery with a certain number of addresses.
     private PeerDiscovery createPeerDiscovery(int nrOfAddressesWanted, int port) {
-        final InetSocketAddress[] addresses = new InetSocketAddress[nrOfAddressesWanted];
+        final List<InetSocketAddress> addresses = new ArrayList<>(nrOfAddressesWanted);
         for (int addressNr = 0; addressNr < nrOfAddressesWanted; addressNr++) {
             // make each address unique by using the counter to increment the port.
-            addresses[addressNr] = new InetSocketAddress("localhost", port + addressNr);
+            addresses.add(new InetSocketAddress("localhost", port + addressNr));
         }
         return new PeerDiscovery() {
-            public InetSocketAddress[] getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
+            public List<InetSocketAddress> getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
                 return addresses;
             }
             public void shutdown() {
@@ -326,8 +326,8 @@ public class PeerGroupTest extends TestWithPeerGroup {
         Block b3 = FakeTxBuilder.makeSolvedTestBlock(b2);
 
         // Expect a zero hash getblocks on p1. This is how the process starts.
-        peerGroup.startBlockChainDownload(new AbstractPeerDataEventListener() {
-        });
+        peerGroup.startBlockChainDownload(new AbstractPeerDataEventListener() {});
+        peerGroup.startBlockChainDownloadFromPeer(peerGroup.getConnectedPeers().iterator().next());
         GetBlocksMessage getblocks = (GetBlocksMessage) outbound(p1);
         assertEquals(Sha256Hash.ZERO_HASH, getblocks.getStopHash());
         // We give back an inv with some blocks in it.
@@ -468,25 +468,35 @@ public class PeerGroupTest extends TestWithPeerGroup {
     @Test
     public void downloadPeerSelection() throws Exception {
         peerGroup.start();
-        VersionMessage versionMessage2 = new VersionMessage(UNITTEST, 2);
-        versionMessage2.clientVersion = NetworkParameters.ProtocolVersion.BLOOM_FILTER.getBitcoinProtocolVersion();
-        versionMessage2.localServices = VersionMessage.NODE_NETWORK;
-        VersionMessage versionMessage3 = new VersionMessage(UNITTEST, 3);
-        versionMessage3.clientVersion = NetworkParameters.ProtocolVersion.BLOOM_FILTER.getBitcoinProtocolVersion();
-        versionMessage3.localServices = VersionMessage.NODE_NETWORK;
+        VersionMessage v1 = new VersionMessage(UNITTEST, 2);
+        v1.clientVersion = NetworkParameters.ProtocolVersion.WITNESS_VERSION.getBitcoinProtocolVersion();
+        v1.localServices = VersionMessage.NODE_NETWORK | VersionMessage.NODE_BLOOM | VersionMessage.NODE_WITNESS;
+        VersionMessage v2 = new VersionMessage(UNITTEST, 4);
+        v2.clientVersion = NetworkParameters.ProtocolVersion.WITNESS_VERSION.getBitcoinProtocolVersion();
+        v2.localServices = VersionMessage.NODE_NETWORK | VersionMessage.NODE_BLOOM | VersionMessage.NODE_WITNESS;
         assertNull(peerGroup.getDownloadPeer());
-        Peer a = connectPeer(1, versionMessage2).peer;
+
+        Peer p1 = connectPeer(0, v1).peer;
         assertEquals(2, peerGroup.getMostCommonChainHeight());
-        assertEquals(a, peerGroup.getDownloadPeer());
-        connectPeer(2, versionMessage2);
-        assertEquals(2, peerGroup.getMostCommonChainHeight());
-        assertEquals(a, peerGroup.getDownloadPeer());  // No change.
-        Peer c = connectPeer(3, versionMessage3).peer;
-        assertEquals(2, peerGroup.getMostCommonChainHeight());
-        assertEquals(a, peerGroup.getDownloadPeer());  // No change yet.
-        connectPeer(4, versionMessage3);
-        assertEquals(3, peerGroup.getMostCommonChainHeight());
-        assertEquals(a, peerGroup.getDownloadPeer());  // Still no change.
+        assertEquals(2, peerGroup.selectDownloadPeer(peerGroup.getConnectedPeers()).getBestHeight());
+        assertEquals(p1, peerGroup.getDownloadPeer());
+
+        connectPeer(1, v1);
+        assertEquals(2, peerGroup.getMostCommonChainHeight()); // No change.
+        assertEquals(2, peerGroup.selectDownloadPeer(peerGroup.getConnectedPeers()).getBestHeight());
+
+        Peer p2 = connectPeer(2, v2).peer;
+        assertEquals(2, peerGroup.getMostCommonChainHeight()); // No change yet.
+        assertEquals(2, peerGroup.selectDownloadPeer(peerGroup.getConnectedPeers()).getBestHeight());
+
+        connectPeer(3, v2);
+        assertEquals(0, peerGroup.getMostCommonChainHeight()); // Most common height tied between two...
+        assertNull(peerGroup.selectDownloadPeer(peerGroup.getConnectedPeers())); // ...so no peer would be selected.
+
+        connectPeer(4, v2);
+        assertEquals(4, peerGroup.getMostCommonChainHeight()); // Now we have a new winner...
+        assertEquals(4, peerGroup.selectDownloadPeer(peerGroup.getConnectedPeers()).getBestHeight());
+        assertEquals(p1, peerGroup.getDownloadPeer()); // ...but the download peer doesn't change unless it misbehaves.
 
         // New peer with a higher protocol version but same chain height.
         // TODO: When PeerGroup.selectDownloadPeer.PREFERRED_VERSION is not equal to vMinRequiredProtocolVersion,
@@ -547,8 +557,8 @@ public class PeerGroupTest extends TestWithPeerGroup {
         peerGroup.addPreMessageReceivedEventListener(preMessageReceivedListener);
         peerGroup.addPeerDiscovery(new PeerDiscovery() {
             @Override
-            public InetSocketAddress[] getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
-                return addresses.toArray(new InetSocketAddress[addresses.size()]);
+            public List<InetSocketAddress> getPeers(long services, long unused, TimeUnit unused2) throws PeerDiscoveryException {
+                return addresses;
             }
 
             @Override
@@ -794,6 +804,7 @@ public class PeerGroupTest extends TestWithPeerGroup {
         assertTrue(p1.lastReceivedFilter.contains(keys.get(5).getPubKeyHash()));
         assertFalse(p1.lastReceivedFilter.contains(keys.get(keys.size() - 1).getPubKey()));
         peerGroup.startBlockChainDownload(null);
+        peerGroup.startBlockChainDownloadFromPeer(peerGroup.getConnectedPeers().iterator().next());
         assertNextMessageIs(p1, GetBlocksMessage.class);
 
         // Make some transactions and blocks that send money to the wallet thus using up all the keys.
@@ -860,5 +871,16 @@ public class PeerGroupTest extends TestWithPeerGroup {
             for (Transaction tx : fb.getAssociatedTransactions().values())
                 inbound(p1, tx);
         }
+    }
+
+    @Test
+    public void testMaxOfMostFreq() throws Exception {
+        assertEquals(0, PeerGroup.maxOfMostFreq(Collections.<Integer>emptyList()));
+        assertEquals(0, PeerGroup.maxOfMostFreq(Arrays.asList(0, 0, 1)));
+        assertEquals(3, PeerGroup.maxOfMostFreq(Arrays.asList(1, 3, 1, 2, 2, 3, 3)));
+        assertEquals(0, PeerGroup.maxOfMostFreq(Arrays.asList(1, 1, 2, 2)));
+        assertEquals(0, PeerGroup.maxOfMostFreq(Arrays.asList(-1, 1, 1, 2, 2)));
+        assertEquals(1, PeerGroup.maxOfMostFreq(Arrays.asList(1, 1, 2, 2, 1)));
+        assertEquals(-1, PeerGroup.maxOfMostFreq(Arrays.asList(-1, -1, 2, 2, -1)));
     }
 }

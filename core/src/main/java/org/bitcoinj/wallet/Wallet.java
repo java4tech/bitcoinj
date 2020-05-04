@@ -124,12 +124,12 @@ import static com.google.common.base.Preconditions.*;
 public class Wallet extends BaseTaggableObject
     implements NewBestBlockListener, TransactionReceivedInBlockListener, PeerFilterProvider, KeyBag, TransactionBag, ReorganizeListener {
     private static final Logger log = LoggerFactory.getLogger(Wallet.class);
-    private static final int MINIMUM_BLOOM_DATA_LENGTH = 8;
-
     // Ordering: lock > keyChainGroupLock. KeyChainGroup is protected separately to allow fast querying of current receive address
     // even if the wallet itself is busy e.g. saving or processing a big reorg. Useful for reducing UI latency.
-    protected final ReentrantLock lock = Threading.lock("wallet");
-    protected final ReentrantLock keyChainGroupLock = Threading.lock("wallet-keychaingroup");
+    protected final ReentrantLock lock = Threading.lock(Wallet.class);
+    protected final ReentrantLock keyChainGroupLock = Threading.lock("Wallet-KeyChainGroup lock");
+
+    private static final int MINIMUM_BLOOM_DATA_LENGTH = 8;
 
     // The various pools below give quick access to wallet-relevant transactions by the state they're in:
     //
@@ -1267,7 +1267,7 @@ public class Wallet extends BaseTaggableObject
                     }
                 } catch (ScriptException e) {
                     // Just means we didn't understand the output of this transaction: ignore it.
-                    log.warn("Could not parse tx output script: {}", e.toString());
+                    log.info("Could not parse tx output script: {}", e.toString());
                 }
             }
         } finally {
@@ -4871,29 +4871,6 @@ public class Wallet extends BaseTaggableObject
             return size;
         } finally {
             endBloomFilterCalculation();
-        }
-    }
-
-    /**
-     * If we are watching any scripts, the bloom filter must update on peers whenever an output is
-     * identified.  This is because we don't necessarily have the associated pubkey, so we can't
-     * watch for it on spending transactions.
-     */
-    @Override
-    public boolean isRequiringUpdateAllBloomFilter() {
-        // This is typically called by the PeerGroup, in which case it will have already explicitly taken the lock
-        // before calling, but because this is public API we must still lock again regardless.
-        keyChainGroupLock.lock();
-        try {
-            if (!watchedScripts.isEmpty())
-                return true;
-            if (keyChainGroup.chains != null)
-                for (DeterministicKeyChain chain : keyChainGroup.chains)
-                    if (chain.getOutputScriptType() == Script.ScriptType.P2WPKH)
-                        return true;
-            return false;
-        } finally {
-            keyChainGroupLock.unlock();
         }
     }
 

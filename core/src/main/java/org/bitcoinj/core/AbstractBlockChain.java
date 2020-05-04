@@ -79,7 +79,7 @@ import static com.google.common.base.Preconditions.*;
  */
 public abstract class AbstractBlockChain {
     private static final Logger log = LoggerFactory.getLogger(AbstractBlockChain.class);
-    protected final ReentrantLock lock = Threading.lock("blockchain");
+    protected final ReentrantLock lock = Threading.lock(AbstractBlockChain.class);
 
     /** Keeps a map of block hashes to StoredBlocks. */
     private final BlockStore blockStore;
@@ -174,14 +174,14 @@ public abstract class AbstractBlockChain {
         addTransactionReceivedListener(Threading.SAME_THREAD, wallet);
         int walletHeight = wallet.getLastBlockSeenHeight();
         int chainHeight = getBestChainHeight();
-        if (walletHeight != chainHeight) {
+        if (walletHeight != chainHeight && walletHeight > 0) {
             log.warn("Wallet/chain height mismatch: {} vs {}", walletHeight, chainHeight);
             log.warn("Hashes: {} vs {}", wallet.getLastBlockSeenHash(), getChainHead().getHeader().getHash());
 
             // This special case happens when the VM crashes because of a transaction received. It causes the updated
             // block store to persist, but not the wallet. In order to fix the issue, we roll back the block store to
             // the wallet height to make it look like as if the block has never been received.
-            if (walletHeight < chainHeight && walletHeight > 0) {
+            if (walletHeight < chainHeight) {
                 try {
                     rollbackBlockStore(walletHeight);
                     log.info("Rolled back block store to height {}.", walletHeight);

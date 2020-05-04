@@ -79,20 +79,21 @@ public class DeterministicKey extends ECKey {
     public DeterministicKey(List<ChildNumber> childNumberPath,
                             byte[] chainCode,
                             ECPoint publicAsPoint,
+                            boolean compressed,
                             @Nullable BigInteger priv,
                             @Nullable DeterministicKey parent) {
-        this(childNumberPath, chainCode, new LazyECPoint(publicAsPoint), priv, parent);
+        this(childNumberPath, chainCode, new LazyECPoint(publicAsPoint, compressed), priv, parent);
     }
 
     /** Constructs a key from its components. This is not normally something you should use. */
-    public DeterministicKey(List<ChildNumber> childNumberPath,
+    public DeterministicKey(HDPath hdPath,
                             byte[] chainCode,
                             BigInteger priv,
                             @Nullable DeterministicKey parent) {
-        super(priv, compressPoint(ECKey.publicPointFromPrivate(priv)));
+        super(priv, ECKey.publicPointFromPrivate(priv), true);
         checkArgument(chainCode.length == 32);
         this.parent = parent;
-        this.childNumberPath = HDPath.M(checkNotNull(childNumberPath));
+        this.childNumberPath = checkNotNull(hdPath);
         this.chainCode = Arrays.copyOf(chainCode, chainCode.length);
         this.depth = parent == null ? 0 : parent.depth + 1;
         this.parentFingerprint = (parent != null) ? parent.getFingerprint() : 0;
@@ -157,7 +158,7 @@ public class DeterministicKey extends ECKey {
                             @Nullable DeterministicKey parent,
                             int depth,
                             int parentFingerprint) {
-        super(priv, compressPoint(ECKey.publicPointFromPrivate(priv)));
+        super(priv, ECKey.publicPointFromPrivate(priv), true);
         checkArgument(chainCode.length == 32);
         this.parent = parent;
         this.childNumberPath = HDPath.M(checkNotNull(childNumberPath));
@@ -169,7 +170,7 @@ public class DeterministicKey extends ECKey {
     
     /** Clones the key */
     public DeterministicKey(DeterministicKey keyToClone, DeterministicKey newParent) {
-        super(keyToClone.priv, keyToClone.pub.get());
+        super(keyToClone.priv, keyToClone.pub.get(), keyToClone.pub.isCompressed());
         this.parent = newParent;
         this.childNumberPath = keyToClone.childNumberPath;
         this.chainCode = keyToClone.chainCode;
